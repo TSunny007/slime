@@ -2,6 +2,14 @@ import re
 
 import torch
 
+from .conversion_utils import (
+    get_head_dim,
+    get_value_num_per_group,
+    match_decoder_layer,
+    split_gate_up_weight,
+    split_qkv_bias,
+)
+
 
 def _convert_mtp_layer(args, name, param, layer_idx):
     """Convert MTP layer parameters from Megatron to HuggingFace format."""
@@ -57,16 +65,12 @@ def convert_qwen3_5_to_hf(args, name, param):
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.language_model.norm.weight", param)]
 
-    try:
-        head_dim = args.kv_channels if args.kv_channels is not None else args.hidden_size // args.num_attention_heads
-    except AttributeError:
-        head_dim = args.hidden_size // args.num_attention_heads
-    value_num_per_group = args.num_attention_heads // args.num_query_groups
+    head_dim = get_head_dim(args)
+    value_num_per_group = get_value_num_per_group(args)
 
-    decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
-    match = re.match(decoder_layers_pattern, name)
-    if match:
-        layer_idx, rest = match.groups()
+    layer = match_decoder_layer(name)
+    if layer:
+        layer_idx, rest = layer
         prefix = f"model.language_model.layers.{layer_idx}"
 
         # experts (grouped gemm - fused format)
@@ -81,7 +85,7 @@ def convert_qwen3_5_to_hf(args, name, param):
         if match:
             rest, expert_idx = match.groups()
             if rest == "linear_fc1":
-                gate_weight, up_weight = param.chunk(2, dim=0)
+                gate_weight, up_weight = split_gate_up_weight(param)
                 return [
                     (f"{prefix}.mlp.experts.{expert_idx}.gate_proj.weight", gate_weight),
                     (f"{prefix}.mlp.experts.{expert_idx}.up_proj.weight", up_weight),
@@ -97,7 +101,7 @@ def convert_qwen3_5_to_hf(args, name, param):
         if match:
             rest = match.groups()[0]
             if rest == "linear_fc1.weight":
-                gate_weight, up_weight = param.chunk(2, dim=0)
+                gate_weight, up_weight = split_gate_up_weight(param)
                 return [
                     (f"{prefix}.mlp.shared_expert.gate_proj.weight", gate_weight),
                     (f"{prefix}.mlp.shared_expert.up_proj.weight", up_weight),
@@ -112,6 +116,7 @@ def convert_qwen3_5_to_hf(args, name, param):
         if rest == "self_attention.linear_proj.weight":
             return [(f"{prefix}.self_attn.o_proj.weight", param)]
         elif rest == "self_attention.linear_qkv.weight":
+            # Qwen3.5-specific: interleaved Q layout with 2*value_num_per_group
             param = param.view(args.num_query_groups, -1, head_dim, args.hidden_size)
             q_param, k_param, v_param = torch.split(
                 param, split_size_or_sections=[2 * value_num_per_group, 1, 1], dim=1
@@ -129,22 +134,14 @@ def convert_qwen3_5_to_hf(args, name, param):
                 (f"{prefix}.self_attn.v_proj.weight", v_param),
             ]
         elif rest == "self_attention.linear_qkv.bias":
-            param = param.view(args.num_query_groups, -1)
-            q_bias, k_bias, v_bias = torch.split(
-                param,
-                split_size_or_sections=[value_num_per_group * head_dim, head_dim, head_dim],
-                dim=1,
-            )
-            q_bias = q_bias.contiguous().flatten()
-            k_bias = k_bias.contiguous().flatten()
-            v_bias = v_bias.contiguous().flatten()
+            q_bias, k_bias, v_bias = split_qkv_bias(param, args)
             return [
                 (f"{prefix}.self_attn.q_proj.bias", q_bias),
                 (f"{prefix}.self_attn.k_proj.bias", k_bias),
                 (f"{prefix}.self_attn.v_proj.bias", v_bias),
             ]
         elif rest == "mlp.linear_fc1.weight":
-            gate_weight, up_weight = param.chunk(2, dim=0)
+            gate_weight, up_weight = split_gate_up_weight(param)
             return [
                 (f"{prefix}.mlp.gate_proj.weight", gate_weight),
                 (f"{prefix}.mlp.up_proj.weight", up_weight),

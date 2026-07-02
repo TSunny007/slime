@@ -1,5 +1,8 @@
 import re
+
 import torch
+
+from .conversion_utils import split_gate_up_weight
 
 _config_cache: dict[str, dict] = {}
 
@@ -92,7 +95,7 @@ def convert_gemma4_to_hf(args, name, param):
         elif rest == "self_attention.k_layernorm.weight":
             return [(f"{L}.self_attn.k_norm.weight", param)]
         elif rest in ("mlp.linear_fc1.weight", "dense_mlp.linear_fc1.weight"):
-            gate_weight, up_weight = param.chunk(2, dim=0)
+            gate_weight, up_weight = split_gate_up_weight(param)
             return [
                 (f"{L}.mlp.gate_proj.weight", gate_weight),
                 (f"{L}.mlp.up_proj.weight", up_weight),

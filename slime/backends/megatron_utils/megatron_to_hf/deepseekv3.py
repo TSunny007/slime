@@ -2,6 +2,8 @@ import re
 
 import torch
 
+from .conversion_utils import match_decoder_layer, split_gate_up_weight, split_qkv_bias
+
 
 def convert_deepseekv3_to_hf(args, name, param):
     if name == "module.module.embedding.word_embeddings.weight":
@@ -11,16 +13,9 @@ def convert_deepseekv3_to_hf(args, name, param):
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
 
-    try:
-        head_dim = args.kv_channels if args.kv_channels is not None else args.hidden_size // args.num_attention_heads
-    except AttributeError:
-        head_dim = args.hidden_size // args.num_attention_heads
-    value_num_per_group = args.num_attention_heads // args.num_query_groups
-
-    decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
-    match = re.match(decoder_layers_pattern, name)
-    if match:
-        layer_idx, rest = match.groups()
+    layer = match_decoder_layer(name)
+    if layer:
+        layer_idx, rest = layer
 
         # experts
         expert_pattern = r"mlp.experts\.(.+)\.weight(\d+)"
@@ -28,7 +23,7 @@ def convert_deepseekv3_to_hf(args, name, param):
         if match:
             rest, expert_idx = match.groups()
             if rest == "linear_fc1":
-                gate_weight, up_weight = param.chunk(2, dim=0)
+                gate_weight, up_weight = split_gate_up_weight(param)
                 outputs = [
                     (f"model.layers.{layer_idx}.mlp.experts.{expert_idx}.gate_proj.weight", gate_weight),
                     (f"model.layers.{layer_idx}.mlp.experts.{expert_idx}.up_proj.weight", up_weight),
@@ -48,7 +43,7 @@ def convert_deepseekv3_to_hf(args, name, param):
         if match:
             rest = match.groups()[0]
             if rest == "linear_fc1.weight":
-                gate_weight, up_weight = param.chunk(2, dim=0)
+                gate_weight, up_weight = split_gate_up_weight(param)
                 return [
                     (f"model.layers.{layer_idx}.mlp.shared_experts.gate_proj.weight", gate_weight),
                     (f"model.layers.{layer_idx}.mlp.shared_experts.up_proj.weight", up_weight),
@@ -91,22 +86,14 @@ def convert_deepseekv3_to_hf(args, name, param):
         elif rest == "self_attention.linear_q_up_proj.weight":
             return [(f"model.layers.{layer_idx}.self_attn.q_b_proj.weight", param)]
         elif rest == "self_attention.linear_qkv.bias":
-            param = param.view(args.num_query_groups, -1)
-            q_bias, k_bias, v_bias = torch.split(
-                param,
-                split_size_or_sections=[value_num_per_group * head_dim, head_dim, head_dim],
-                dim=1,
-            )
-            q_bias = q_bias.contiguous().flatten()
-            k_bias = k_bias.contiguous().flatten()
-            v_bias = v_bias.contiguous().flatten()
+            q_bias, k_bias, v_bias = split_qkv_bias(param, args)
             return [
                 (f"model.layers.{layer_idx}.self_attn.q_proj.bias", q_bias),
                 (f"model.layers.{layer_idx}.self_attn.k_proj.bias", k_bias),
                 (f"model.layers.{layer_idx}.self_attn.v_proj.bias", v_bias),
             ]
         elif rest == "mlp.linear_fc1.weight":
-            gate_weight, up_weight = param.chunk(2, dim=0)
+            gate_weight, up_weight = split_gate_up_weight(param)
             return [
                 (f"model.layers.{layer_idx}.mlp.gate_proj.weight", gate_weight),
                 (f"model.layers.{layer_idx}.mlp.up_proj.weight", up_weight),

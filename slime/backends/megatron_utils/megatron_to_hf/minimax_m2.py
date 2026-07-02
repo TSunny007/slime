@@ -1,6 +1,7 @@
 import re
 
-import torch
+
+from .conversion_utils import match_decoder_layer, split_gate_up_weight, split_qkv_weight
 
 
 def convert_minimax_m2_to_hf(args, name, param):
@@ -17,16 +18,9 @@ def convert_minimax_m2_to_hf(args, name, param):
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
 
-    try:
-        head_dim = args.kv_channels if args.kv_channels is not None else args.hidden_size // args.num_attention_heads
-    except AttributeError:
-        head_dim = args.hidden_size // args.num_attention_heads
-    value_num_per_group = args.num_attention_heads // args.num_query_groups
-
-    decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
-    match = re.match(decoder_layers_pattern, name)
-    if match:
-        layer_idx, rest = match.groups()
+    layer = match_decoder_layer(name)
+    if layer:
+        layer_idx, rest = layer
 
         # MoE experts: linear_fc1 -> w1 (gate) + w3 (up), linear_fc2 -> w2 (down)
         expert_pattern = r"mlp.experts\.(.+)\.weight(\d+)"
@@ -34,7 +28,7 @@ def convert_minimax_m2_to_hf(args, name, param):
         if match:
             rest, expert_idx = match.groups()
             if rest == "linear_fc1":
-                gate_weight, up_weight = param.chunk(2, dim=0)
+                gate_weight, up_weight = split_gate_up_weight(param)
                 return [
                     (f"model.layers.{layer_idx}.block_sparse_moe.experts.{expert_idx}.w1.weight", gate_weight),
                     (f"model.layers.{layer_idx}.block_sparse_moe.experts.{expert_idx}.w3.weight", up_weight),
@@ -52,11 +46,7 @@ def convert_minimax_m2_to_hf(args, name, param):
 
         # Attention: fused QKV -> split into Q/K/V (GQA: 48 heads, 8 kv heads)
         elif rest == "self_attention.linear_qkv.weight":
-            param = param.view(args.num_query_groups, -1, head_dim, args.hidden_size)
-            q_param, k_param, v_param = torch.split(param, split_size_or_sections=[value_num_per_group, 1, 1], dim=1)
-            q_param = q_param.reshape(-1, args.hidden_size)
-            k_param = k_param.reshape(-1, args.hidden_size)
-            v_param = v_param.reshape(-1, args.hidden_size)
+            q_param, k_param, v_param = split_qkv_weight(param, args)
             return [
                 (f"model.layers.{layer_idx}.self_attn.q_proj.weight", q_param),
                 (f"model.layers.{layer_idx}.self_attn.k_proj.weight", k_param),
