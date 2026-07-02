@@ -2333,7 +2333,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
 def serve_directory(directory: Path, port: int) -> None:
     handler = functools.partial(QuietHandler, directory=str(directory))
-    with socketserver.TCPServer(("0.0.0.0", port), handler) as httpd:
+    with socketserver.TCPServer(("127.0.0.1", port), handler) as httpd:
         print(f"Serving http://127.0.0.1:{port}/")
         print("Press Ctrl+C to stop.")
         try:

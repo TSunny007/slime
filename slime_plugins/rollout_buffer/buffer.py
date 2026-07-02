@@ -11,7 +11,7 @@ import uvicorn
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-app = FastAPI(title="Rollout Buffer Server", debug=True)
+app = FastAPI(title="Rollout Buffer Server")
 
 
 def default_is_valid_group(group_data, min_valid_group_size, task_type):

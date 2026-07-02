@@ -1,6 +1,7 @@
 # Adapt from https://github.com/alibaba/Pai-Megatron-Patch/blob/2b201af08336dea0403df7c6b497c964cf5a2e75/toolkits/model_checkpoints_convertor/deepseek/fp8_cast_bf16.py
 import json
 import os
+import shutil
 from argparse import ArgumentParser
 from glob import glob
 
@@ -42,10 +43,13 @@ def weight_dequant(x: torch.Tensor, s: torch.Tensor, block_size: int = 128) -> t
 def main(fp8_path, bf16_path):
     torch.set_default_dtype(torch.bfloat16)
     os.makedirs(bf16_path, exist_ok=True)
-    os.system("cp -rf " + fp8_path + "/config.json " + bf16_path)
-    os.system("cp -rf " + fp8_path + "/*.py " + bf16_path)
-    os.system("cp -rf " + fp8_path + "/tokenizer* " + bf16_path)
-    os.system("cp -rf " + fp8_path + "/chat_template* " + bf16_path)
+    for pattern in ["config.json", "*.py", "tokenizer*", "chat_template*"]:
+        for src in glob(os.path.join(fp8_path, pattern)):
+            dst = os.path.join(bf16_path, os.path.basename(src))
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
     model_index_file = os.path.join(fp8_path, "model.safetensors.index.json")
     with open(model_index_file) as f:
         model_index = json.load(f)

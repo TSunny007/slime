@@ -24,9 +24,10 @@ def prepare():
 
 
 def execute():
-    debug_data_path = os.environ.get("DEBUG_ROLLOUT_DATA") or tempfile.mktemp(
-        prefix="qwen3_6_35b_a3b_pd_rollout_", suffix=".pt"
-    )
+    debug_data_path = os.environ.get("DEBUG_ROLLOUT_DATA")
+    if not debug_data_path:
+        _fd, debug_data_path = tempfile.mkstemp(prefix="qwen3_6_35b_a3b_pd_rollout_", suffix=".pt")
+        os.close(_fd)
     try:
         os.remove(debug_data_path)
     except FileNotFoundError:
