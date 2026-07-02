@@ -163,8 +163,8 @@ class AsyncRolloutWorker:
             )
             try:
                 await asyncio.wait(active_tasks, timeout=30)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001
+                logger.warning("fully-async: drain wait failed: %r", e)
 
     def _make_done_cb(self, gid: int):
         def _cb(done_task: asyncio.Task) -> None:

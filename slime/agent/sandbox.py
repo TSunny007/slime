@@ -368,7 +368,8 @@ class E2BSandbox:
                 f"read_file({sandbox_path})",
                 lambda: self._sb.files.read(sandbox_path, user=user),
             )
-        except Exception:
+        except Exception as e:
+            logger.warning("[agent.sandbox] read_file(%s) failed, returning empty: %s", sandbox_path, e)
             return ""
 
 

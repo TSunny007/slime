@@ -40,7 +40,9 @@ async def _get_server_num_requests(url: str) -> int:
     return num_requests_from_load(await get(f"{url}/v1/loads?include=core"))
 
 
-async def abort_server_until_idle(url: str, retry_interval: int = ABORT_RETRY_INTERVAL_SECONDS) -> None:
+async def abort_server_until_idle(
+    url: str, retry_interval: int = ABORT_RETRY_INTERVAL_SECONDS, max_attempts: int = 30
+) -> None:
     attempt = 1
     while True:
         logger.info(f"Abort request for SGLang server {url}")
@@ -49,11 +51,20 @@ async def abort_server_until_idle(url: str, retry_interval: int = ABORT_RETRY_IN
         try:
             num_requests = await _get_server_num_requests(url)
         except Exception as e:
-            logger.warning(f"Failed to get SGLang server load from {url}: {e}")
-            return
+            logger.warning(f"Failed to get SGLang server load from {url} (attempt {attempt}): {e}")
+            if attempt >= max_attempts:
+                raise RuntimeError(f"Cannot confirm SGLang server {url} is idle after {max_attempts} attempts") from e
+            await asyncio.sleep(retry_interval)
+            attempt += 1
+            continue
 
         if num_requests <= 0:
             return
+
+        if attempt >= max_attempts:
+            raise RuntimeError(
+                f"SGLang server {url} still has {num_requests} requests after {max_attempts} abort attempts"
+            )
 
         logger.info(
             f"SGLang server {url} still has {num_requests} requests after abort attempt {attempt}; "

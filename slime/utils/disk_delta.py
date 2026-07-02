@@ -97,15 +97,19 @@ def _write_applied_version(local_ckpt_dir: str, version: str) -> None:
 
 
 def drop_page_cache(path: str) -> None:
-    """Evict a file from the page cache (POSIX_FADV_DONTNEED)."""
+    """Evict a file from the page cache (POSIX_FADV_DONTNEED).
+
+    Best-effort: logs a debug message on failure (e.g. file already removed,
+    permissions, or non-POSIX filesystem).
+    """
     try:
         fd = os.open(path, os.O_RDONLY)
         try:
             os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
         finally:
             os.close(fd)
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug("drop_page_cache(%s) skipped: %s", path, e)
 
 
 def init_local_checkpoint(local_ckpt_dir: str, base_dir: str) -> None:

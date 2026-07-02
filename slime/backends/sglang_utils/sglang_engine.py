@@ -90,8 +90,9 @@ def _wait_server_healthy(base_url, api_key, is_process_alive):
                 response = session.get(f"{base_url}/health_generate", headers=headers)
                 if response.status_code == 200:
                     break
-            except requests.RequestException:
-                pass
+                logger.debug("Server %s not ready (HTTP %d), retrying...", base_url, response.status_code)
+            except requests.RequestException as e:
+                logger.debug("Server %s health check failed: %s, retrying...", base_url, e)
 
             if not is_process_alive():
                 raise Exception("Server process terminated unexpectedly.")
@@ -138,7 +139,7 @@ class SGLangEngine(RayActor):
                 if ipaddress.ip_address(addr).version == 6:
                     return f"[{addr}]"
             except ValueError:
-                pass
+                pass  # not a valid IP literal — treat as hostname
             return addr
 
         host = _format_v6_uri(host)
@@ -305,6 +306,7 @@ class SGLangEngine(RayActor):
         if self.node_rank != 0:
             return
         # flush cache will not return status_code 200 when there are pending requests
+        last_error = None
         for _ in range(60):
             try:
                 response = requests.get(f"http://{self.server_host}:{self.server_port}/flush_cache")
@@ -312,14 +314,15 @@ class SGLangEngine(RayActor):
                     break
                 logger.info(f"Error flushing cache: HTTP {response.status_code} {response.text!r}")
                 time.sleep(1)
-            except NewConnectionError as e:
-                raise e
+            except NewConnectionError:
+                raise
             except Exception as e:
+                last_error = e
                 logger.info(f"Error flushing cache: {e}")
                 time.sleep(1)
                 continue
         else:
-            raise TimeoutError("Timeout while flushing cache.")
+            raise TimeoutError("Timeout while flushing cache.") from last_error
 
     def get_url(self):
         if self.node_rank != 0:
@@ -457,9 +460,9 @@ class SGLangEngine(RayActor):
                     "group_name": group_name,
                 },
             )
-        except requests.exceptions.RequestException:
-            # catch the case there the engine is just created and does not have the group.
-            pass
+        except requests.exceptions.RequestException as e:
+            # The engine may have just been created and does not have the group yet.
+            logger.debug("destroy_weights_update_group(%s) skipped (engine may lack group): %s", group_name, e)
 
     def update_weights_from_distributed(
         self,

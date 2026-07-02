@@ -63,8 +63,8 @@ def get_host_info():
                 ip = s.getsockname()[0]
                 if not _is_loopback(ip):
                     return ip
-        except Exception:
-            pass  # Route unreachable or network error, move to next strategy.
+        except Exception as e:
+            logger.debug("UDP probe for %s failed: %s", test_target_ip, e)
 
         # Strategy 2: Hostname Resolution (Fallback for offline clusters)
         # Useful for offline environments where UDP connect fails but /etc/hosts is configured.
@@ -78,8 +78,8 @@ def get_host_info():
                 # Must filter out loopback addresses to avoid "127.0.0.1" issues
                 if not _is_loopback(ip):
                     return ip
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Hostname resolution for %s (family=%s) failed: %s", hostname, family, e)
 
         return None
 
@@ -123,7 +123,7 @@ def run_router(args):
             return 1
         return 0
     except Exception as e:
-        logger.info(e)
+        logger.error("Failed to launch SGLang router: %s", e, exc_info=True)
         return 1
 
 
@@ -182,12 +182,17 @@ async def _post(client, url, payload, max_retries=60, headers=None):
             else:
                 response_text = None
 
-            logger.info(
-                f"Error: {e}, retrying... (attempt {retry_count}/{max_retries}, url={url}, response={response_text})"
+            logger.warning(
+                "HTTP POST error: %s, retrying... (attempt %d/%d, url=%s, response=%s)",
+                e,
+                retry_count,
+                max_retries,
+                url,
+                response_text,
             )
             if retry_count >= max_retries:
-                logger.info(f"Max retries ({max_retries}) reached, failing... (url={url})")
-                raise e
+                logger.error("Max retries (%d) reached, failing... (url=%s)", max_retries, url)
+                raise
             await asyncio.sleep(1)
             continue
         finally:
@@ -303,7 +308,7 @@ async def post(url, payload, max_retries=60, headers=None):
                 obj_ref = actor.do_post.remote(url, payload, max_retries, headers=headers)
                 return await obj_ref
         except Exception as e:
-            logger.info(f"[http_utils] Distributed POST failed, falling back to local: {e} (url={url})")
+            logger.warning("[http_utils] Distributed POST failed, falling back to local: %s (url=%s)", e, url)
             # fall through to local
 
     return await _post(_http_client, url, payload, max_retries, headers=headers)

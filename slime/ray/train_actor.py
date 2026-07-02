@@ -87,9 +87,9 @@ class TrainRayActor(RayActor):
                 pynvml.nvmlShutdown()
 
         except ImportError:
-            logger.info("Warning: pynvml not available, skipping NUMA affinity setup")
+            logger.info("pynvml not available, skipping NUMA affinity setup")
         except Exception as e:
-            logger.info(f"Warning: Failed to set NUMA affinity: {e}")
+            logger.warning("Failed to set NUMA affinity: %s", e)
 
     def clear_memory(self):
         if self.args.debug_rollout_only:

@@ -31,14 +31,18 @@ class AppHandle:
     runner: web.AppRunner
 
     def stop(self) -> None:
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
         async def _shutdown() -> None:
             await self.runner.cleanup()
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_shutdown(), self.loop)
             fut.result(timeout=10)
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug("AppHandle.stop() runner cleanup failed (non-fatal): %s", e)
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(timeout=5)
 
